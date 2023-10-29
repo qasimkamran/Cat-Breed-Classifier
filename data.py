@@ -1,62 +1,89 @@
-import random
+def handle_tfds_protobuf_winerror(shuffle_py_dir):
+    # Fix windows error for not including resource
+    shuffle_py = shuffle_py_dir
+    with open(shuffle_py, 'r') as file:
+        lines = file.readlines()
+
+    line_number_to_edit = 20  # import resource
+    new_content = ""
+    if 0 < line_number_to_edit <= len(lines):
+        lines[line_number_to_edit - 1] = new_content  # Subtract 1 because list index starts from 0
+    line_number_to_edit = 73  # """Attempts to increase the maximum number of open file descriptors."""
+    new_content = "  pass"
+    if 0 < line_number_to_edit <= len(lines):
+        lines[line_number_to_edit - 1] = new_content + '\n'  # Subtract 1 because list index starts from 0
+
+    with open(shuffle_py, 'w') as file:
+        file.writelines(lines)
+
+
+try:
+    import tensorflow_datasets as tfds
+except ImportError:
+    handle_tfds_protobuf_winerror(
+        'D:\\Projects\\Cats-v-Dogs-Classifier\\venv\\lib\\site-packages\\tensorflow_datasets\\core\\shuffle.py')
+    print("Import error handled")
+    print("Verify shuffle.py contents and re-run data.py")
+
 import matplotlib.pyplot as plt
 import numpy as np
-import subprocess
-
-from keras_preprocessing.image import ImageDataGenerator
 
 
-DATA_DIR = "C:\\Users\\qasim\\Downloads\\cat_breed_dataset\\images"
+class TFDataset:
+    tfds_train_dataset = None
+    tfds_test_dataset = None
+    tfds_dataset_info = None
 
-DATA_GEN = ImageDataGenerator(
-    rescale=1. / 255,
-    zoom_range=0.2,
-    horizontal_flip=True
-)
+    def __init__(self, dataset_id):
+        self.load_data(dataset_id)
 
-TARGET_SIZE = (300, 400)
+    def load_data(self, dataset_id):
+        (self.tfds_train_dataset, self.tfds_test_dataset), self.tfds_dataset_info = tfds.load(
+            name=dataset_id,
+            split=['train[:80%]', 'train[80%:]'],
+            with_info=True,
+            as_supervised=True,
+        )
+        print(self.tfds_dataset_info)
+        print(f"{dataset_id} dataset loaded")
 
-train_gen = DATA_GEN.flow_from_directory(
-    DATA_DIR,
-    TARGET_SIZE,
-    batch_size=16,
-    class_mode='categorical'
-)
+    def get_data_batch(self, batch_size, set_id):
+        batch = None
+        images, labels = [], []
+        if set_id != 'train' and set_id != 'test':
+            raise Exception(f"invalid set_id - {set_id}")
+        if self.tfds_train_dataset and set_id == 'train':
+            iamges, labels = self.tfds_train_dataset.take(batch_size)
+        if self.tfds_test_dataset and set_id == 'test':
+            batch = self.tfds_test_dataset.take(batch_size)
+        if not batch:
+            raise Exception("Error taking batch from tensorflow dataset object")
+        print(batch)
+        for example in batch:
+            images.append(example['image'])
+            labels.append(example['label'])
+        return images, labels
 
-class_ids = list(train_gen.class_indices.keys())
-
-
-def plot_class_batch(input_class_id: str = 'Random') -> None:
-    target_class_id = None
-    target_class_index = None
-
-    # Handle setting target_class_id and retrieving relevant target_class_index
-    if input_class_id == 'Random':
-        class_index = random.randint(0, (len(class_ids) - 1))
-        target_class_id = class_ids[class_index]
-    if not target_class_id:
-        target_class_id = input_class_id
-    for class_index, class_id in enumerate(class_ids):
-        if class_id == target_class_id:
-            target_class_index = class_index
-
-    if not target_class_index:
-        print('Could not find class id "' + input_class_id + '" in dataset')
-        raise Exception
-
-    batch = next(train_gen)
-    images, labels = batch  # shape: (batch_size, num_of_classes)
-    num_samples = images.shape[0]
-    class_indices = np.where(labels[:, target_class_index] == 1)[0]
-    plt.figure(figsize=(8, 4))
-    for i in range(1, num_samples):
-        plt.subplot(4, int(num_samples/4), i)
-        plt.imshow(images[class_indices[i]])
-        plt.title(target_class_id)
-        plt.axis('off')
-    plt.tight_layout()
-    plt.show()
+    def view_data_batch(self, data_batch):
+        images, labels = data_batch
+        num_images = len(images)
+        num_cols = int(np.sqrt(num_images))
+        num_rows = int(np.ceil(num_images / num_cols))
+        figure, axes = plt.subplots(num_cols, num_rows, figsize=(15, 3))
+        axes = axes.flatten()
+        for i in range(num_images):
+            if i < num_images:
+                axis = axes[i]
+                axis.imshow(images[i])
+                axis.set_title(labels[i])
+                axis.axis('off')
+            else:
+                axes[i].axis('off')
+        plt.tight_layout()
+        plt.show()
 
 
 if '__main__' == __name__:
-    plot_class_batch('Tuxedo')
+    dataset = TFDataset(dataset_id='cats_vs_dogs')
+    images, labels = dataset.get_data_batch(16, 'train')
+    dataset.view_data_batch((images, labels))
