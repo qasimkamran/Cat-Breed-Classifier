@@ -1,3 +1,6 @@
+import cv2
+
+
 def handle_tfds_protobuf_winerror(shuffle_py_dir):
     # Fix windows error for not including resource
     shuffle_py = shuffle_py_dir
@@ -24,7 +27,6 @@ except ImportError:
         'D:\\Projects\\Cats-v-Dogs-Classifier\\venv\\lib\\site-packages\\tensorflow_datasets\\core\\shuffle.py')
     print("Import error handled")
     print("Verify shuffle.py contents and re-run data.py")
-
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -47,29 +49,33 @@ class TFDataset:
         print(self.tfds_dataset_info)
         print(f"{dataset_id} dataset loaded")
 
-    def get_data_batch(self, batch_size, set_id):
+    def get_batch(self, batch_size, set_id):
         batch = None
-        images, labels = [], []
         if set_id != 'train' and set_id != 'test':
             raise Exception(f"invalid set_id - {set_id}")
         if self.tfds_train_dataset and set_id == 'train':
-            iamges, labels = self.tfds_train_dataset.take(batch_size)
+            batch = self.tfds_train_dataset.take(batch_size)
         if self.tfds_test_dataset and set_id == 'test':
             batch = self.tfds_test_dataset.take(batch_size)
         if not batch:
             raise Exception("Error taking batch from tensorflow dataset object")
-        print(batch)
-        for example in batch:
-            images.append(example['image'])
-            labels.append(example['label'])
-        return images, labels
+        return tfds.as_numpy(batch)  # Saved for expansion
 
-    def view_data_batch(self, data_batch):
-        images, labels = data_batch
+    def map_label(self, label):
+        if label == 1:
+            return "Dog"
+        else:
+            return "Cat"
+
+    def view_batch(self, np_batch):
+        images, labels = [], []
+        for image, label in np_batch:
+            images.append(image)
+            labels.append(self.map_label(label))
         num_images = len(images)
         num_cols = int(np.sqrt(num_images))
         num_rows = int(np.ceil(num_images / num_cols))
-        figure, axes = plt.subplots(num_cols, num_rows, figsize=(15, 3))
+        figure, axes = plt.subplots(num_cols, num_rows, figsize=(8, 8))
         axes = axes.flatten()
         for i in range(num_images):
             if i < num_images:
@@ -85,5 +91,5 @@ class TFDataset:
 
 if '__main__' == __name__:
     dataset = TFDataset(dataset_id='cats_vs_dogs')
-    images, labels = dataset.get_data_batch(16, 'train')
-    dataset.view_data_batch((images, labels))
+    batch = dataset.get_batch(16, 'train')
+    dataset.view_batch(batch)
