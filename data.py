@@ -1,3 +1,6 @@
+import cv2
+
+
 def handle_tfds_protobuf_winerror(shuffle_py_dir):
     # Fix windows error for not including resource
     shuffle_py = shuffle_py_dir
@@ -84,10 +87,32 @@ def rename_tfrecords(file_path, total_records):
     print(f"File {file_path} renamed to {new_file_path}")
 
 
+def _bytes_feature(value):
+    """Returns a bytes_list from a string / byte."""
+    if isinstance(value, type(tf.constant(0))):
+        value = value.numpy()  # BytesList won't unpack a string from an EagerTensor.
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+
+
+def _int64_feature(value):
+    """Returns an int64_list from a bool / enum / int / uint."""
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
+
+
+def is_binary(num):
+    try:
+        result = int(num)
+        return result == 0 or result == 1
+    except (ValueError, TypeError):
+        return False
+
+
 class TFDataset:
     tfds_train_dataset = None
     tfds_test_dataset = None
     tfds_dataset_info = None
+
+    average_image_size = 0
 
     def __init__(self, dataset_id):
         self.load_data(dataset_id)
@@ -103,6 +128,16 @@ class TFDataset:
         )
         print(self.tfds_dataset_info)
         print(f"{dataset_id} dataset loaded")
+        print("Calculating size average...")
+        self.calculate_size_averages()
+
+    def calculate_size_averages(self):
+        num_examples = self.tfds_train_dataset.cardinality().numpy()
+        np_batch = self.get_batch(num_examples, 'train')
+        bytes_total = 0
+        for image, _ in np_batch:
+            bytes_total += image.nbytes
+        self.average_image_size = get_bytes_to_megabytes(bytes_total / num_examples)
 
     def get_batch(self, batch_size, set_id):
         batch = None
@@ -142,7 +177,7 @@ class TFDataset:
 
     def create_tfrecord(self):
         tfrecords = []
-        threshold_size = 10  # In megabytes
+        threshold = 0.2  # 20%
         new_required = False
         data_dir = self.tfds_dataset_info.data_dir
         average_file_size = get_average_dir_file_size(data_dir)
@@ -153,7 +188,7 @@ class TFDataset:
                 tfrecords.append(tfrecord_filepath)
 
         last_size = get_bytes_to_megabytes(os.path.getsize(tfrecords[-2]))
-        if abs(last_size - average_file_size) <= threshold_size:
+        if abs(last_size - average_file_size) <= (threshold * average_file_size):
             new_required = True
 
         if new_required:
@@ -168,9 +203,30 @@ class TFDataset:
         else:
             print("New tfrecord not required")
 
+    def create_example(self, image_id, label):
+        is_binary(label)  # Must be a binary classifier input label
+        threshold = 0.2  # 20%
+        image_path = os.path.join('tmp', image_id)
+        image = cv2.imread(image_path)
+        image_size = get_bytes_to_megabytes(image.nbytes)
+        if abs(image_size - self.average_image_size) <= (threshold * self.average_image_size):
+            print(f"Error adding image of size - {image_size} "
+                  f"beyond threshold of average image size - {self.average_image_size}")
+
+        img_bytes = tf.image.encode_png(tf.image.convert_image_dtype(image, dtype=tf.uint8)).numpy()
+        feature = {
+            'image': _bytes_feature(img_bytes),
+            'label': _int64_feature(label)
+        }
+        example_proto = tf.train.Example(features=tf.train.Features(feature=feature))
+        return example_proto.SerializeToString()
+
 
 if '__main__' == __name__:
     dataset = TFDataset(dataset_id='cats_vs_dogs')
-    dataset.create_tfrecord()
-    batch = dataset.get_batch(16, 'train')
-    dataset.view_batch(batch)
+
+    # dataset.create_example('NG_Cat.png', 1)
+
+    # dataset.create_tfrecord()
+    # batch = dataset.get_batch(16, 'train')
+    # dataset.view_batch(batch)
