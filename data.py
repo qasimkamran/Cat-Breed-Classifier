@@ -218,9 +218,18 @@ class TfdsUtility:
         image, label = batch.skip(index).take(1).as_numpy_iterator().next()
         return image, label
 
+    def filter_func(self, image, label, image_to_remove, label_to_remove):
+        exclude_tensor_image = tf.convert_to_tensor(image_to_remove, dtype=tf.uint8)
+        exclude_tensor_label = tf.convert_to_tensor(label_to_remove, dtype=tf.int64)
+        image_shape = tf.shape(image)
+        exclude_tensor_image_shape = tf.shape(exclude_tensor_image)
+        if tf.reduce_all(tf.equal(image_shape, exclude_tensor_image_shape)):
+            return tf.math.reduce_all(tf.not_equal(image, exclude_tensor_image)) and tf.reduce_all(tf.not_equal(label, exclude_tensor_label))
+        return True
+
     def remove_example_at_index(self, index):
         image_to_remove, label_to_remove = self.get_image_label_to_remove(index)
-        self.ds = self.ds.filter(lambda image, label: not np.array_equal(image, image_to_remove) and label != label_to_remove)
+        self.ds = self.ds.filter(lambda image, label: self.filter_func(image, label, image_to_remove, label_to_remove))
 
 
 if '__main__' == __name__:
@@ -232,6 +241,6 @@ if '__main__' == __name__:
     #
     # tfds_utility.add_example_to_ds(example)
 
-    tfds_utility.remove_example_at_index(0)
+    tfds_utility.remove_example_at_index(1)
 
-    tfds_utility.view_batch(tfds_utility.get_np_batch(1))
+    tfds_utility.view_batch(tfds_utility.get_np_batch(2))
