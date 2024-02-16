@@ -1,4 +1,5 @@
 import cv2
+from tensorflow_datasets.core.dataset_utils import _IterableDataset
 
 
 def handle_tfds_protobuf_winerror(shuffle_py_dir):
@@ -107,126 +108,130 @@ def is_binary(num):
         return False
 
 
-class TFDataset:
-    tfds_train_dataset = None
-    tfds_test_dataset = None
-    tfds_dataset_info = None
+def get_length_of_iterable(iterable):
+    count = 0
+    for _ in iterable:
+        count += 1
+    return count
+
+
+class TfdsUtility:
+    ds = None
+    ds_info = None
 
     average_image_size = 0
+
+    SHARDS_DIR = ".\\shards"
 
     def __init__(self, dataset_id):
         self.load_data(dataset_id)
 
     def load_data(self, dataset_id):
         data_dir = os.path.join(os.curdir, 'dataset')
-        (self.tfds_train_dataset, self.tfds_test_dataset), self.tfds_dataset_info = tfds.load(
+        self.ds, self.ds_info = tfds.load(
             name=dataset_id,
-            split=['train[:80%]', 'train[80%:]'],
             with_info=True,
             as_supervised=True,
             data_dir=data_dir
         )
-        print(self.tfds_dataset_info)
+        self.ds = self.ds['train']
+        print("Loading all shards...")
+        self.load_all_shards()
         print(f"{dataset_id} dataset loaded")
-        print("Calculating size average...")
+        print("Calculating size averages...")
         self.calculate_size_averages()
+        print("Size averages calculated")
 
     def calculate_size_averages(self):
-        num_examples = self.tfds_train_dataset.cardinality().numpy()
-        np_batch = self.get_batch(num_examples, 'train')
+        num_examples = self.ds.cardinality().numpy()
+        np_batch = self.get_np_batch(num_examples)
         bytes_total = 0
         for image, _ in np_batch:
             bytes_total += image.nbytes
         self.average_image_size = get_bytes_to_megabytes(bytes_total / num_examples)
 
-    def get_batch(self, batch_size, set_id):
-        batch = None
-        if set_id != 'train' and set_id != 'test':
-            raise Exception(f"invalid set_id - {set_id}")
-        if self.tfds_train_dataset and set_id == 'train':
-            batch = self.tfds_train_dataset.take(batch_size)
-        if self.tfds_test_dataset and set_id == 'test':
-            batch = self.tfds_test_dataset.take(batch_size)
+    def get_np_batch(self, batch_size):
+        batch = self.ds.take(batch_size)
         if not batch:
             raise Exception("Error taking batch from tensorflow dataset object")
-        return tfds.as_numpy(batch)  # Saved for expansion
+        return tfds.as_numpy(batch)
+
+    def get_tfds_batch(self, batch_size):
+        return self.ds.take(batch_size)
 
     def map_label(self, label):
-        return self.tfds_dataset_info.features['label'].int2str(label)
+        return self.ds_info.features['label'].int2str(label)
 
-    def view_batch(self, np_batch):
-        images, labels = [], []
-        for image, label in np_batch:
-            images.append(image)
-            labels.append(self.map_label(label))
-        num_images = len(images)
-        num_cols = int(np.sqrt(num_images))
-        num_rows = int(np.ceil(num_images / num_cols))
-        figure, axes = plt.subplots(num_cols, num_rows, figsize=(8, 8))
-        axes = axes.flatten()
-        for i in range(num_images):
-            if i < num_images:
-                axis = axes[i]
-                axis.imshow(images[i])
-                axis.set_title(labels[i])
-                axis.axis('off')
-            else:
-                axes[i].axis('off')
-        plt.tight_layout()
+    def view_batch(self, np_batch):  # View batch in equal cols and rows
+        num_examples = get_length_of_iterable(np_batch)
+        cols = int(np.ceil(np.sqrt(num_examples)))
+        rows = int(np.ceil(num_examples / cols))
+        fig = plt.figure(figsize=(10, 10))
+        for i, (image, label) in enumerate(np_batch):
+            label = self.map_label(label)
+            ax = fig.add_subplot(rows, cols, i + 1)
+            ax.set_title(label)
+            ax.axis('off')
+            ax.grid(False)
+            ax.imshow(image)
+        fig.tight_layout()
         plt.show()
 
-    def create_tfrecord(self):
-        tfrecords = []
-        threshold = 0.2  # 20%
-        new_required = False
-        data_dir = self.tfds_dataset_info.data_dir
-        average_file_size = get_average_dir_file_size(data_dir)
-
-        for file in os.listdir(data_dir):
-            if file.__contains__('tfrecord'):
-                tfrecord_filepath = os.path.join(data_dir, file)
-                tfrecords.append(tfrecord_filepath)
-
-        last_size = get_bytes_to_megabytes(os.path.getsize(tfrecords[-2]))
-        if abs(last_size - average_file_size) <= (threshold * average_file_size):
-            new_required = True
-
-        if new_required:
-            new_total = len(tfrecords) + 1
-            for tfrecord in tfrecords:
-                rename_tfrecords(tfrecord, new_total)
-            current_index = len(tfrecords)
-            set_name, extension = extract_set_name_and_extension(tfrecords[0])
-            tfrecord_filepath = os.path.join(data_dir, f"{set_name}.tfrecord-{current_index:05d}-of-{new_total:05d}")
-            tf.io.TFRecordWriter(tfrecord_filepath)
-            print(f"New tfrecord {tfrecord_filepath} created")
-        else:
-            print("New tfrecord not required")
-
     def create_example(self, image_id, label):
-        is_binary(label)  # Must be a binary classifier input label
-        threshold = 0.2  # 20%
-        image_path = os.path.join('tmp', image_id)
-        image = cv2.imread(image_path)
+        threshold = 0.2
+        image_dir = os.path.join("tmp", image_id)
+        if not os.path.exists(image_dir):
+            raise Exception(f"Image {image_id} does not exist in tmp directory")
+        image = cv2.imread(image_dir)
         image_size = get_bytes_to_megabytes(image.nbytes)
-        if abs(image_size - self.average_image_size) <= (threshold * self.average_image_size):
-            print(f"Error adding image of size - {image_size} "
-                  f"beyond threshold of average image size - {self.average_image_size}")
+        if image_size > (0.2 * self.average_image_size + self.average_image_size):
+            x = round(image_size - self.average_image_size, 2)
+            raise Exception(f"Image is {x}mb larger than average image size")
+        image_tensor = tf.convert_to_tensor(image, dtype=tf.uint8)
+        image_tensor.set_shape([None, None, 3])
+        label_tensor = tf.convert_to_tensor(label, dtype=tf.int64)
+        return image_tensor, label_tensor
 
-        img_bytes = tf.image.encode_png(tf.image.convert_image_dtype(image, dtype=tf.uint8)).numpy()
-        feature = {
-            'image': _bytes_feature(img_bytes),
-            'label': _int64_feature(label)
-        }
-        example_proto = tf.train.Example(features=tf.train.Features(feature=feature))
-        return example_proto.SerializeToString()
+    def create_shard_id(self):
+        return len(os.listdir(self.SHARDS_DIR))
+
+    def add_example_to_ds(self, example):
+        new_set = tf.data.Dataset.from_tensors(example)
+        self.ds = self.ds.concatenate(new_set)
+        shard_id = self.create_shard_id()
+        shard_dir = os.path.join(self.SHARDS_DIR, f"shard_{shard_id}")
+        new_set.save(shard_dir)
+
+    def view_last_shard(self):
+        shard_id = len(os.listdir(self.SHARDS_DIR)) - 1
+        shard_dir = os.path.join(self.SHARDS_DIR, f"shard_{shard_id}")
+        shard = tf.data.Dataset.load(shard_dir)
+        self.view_batch(tfds.as_numpy(shard))
+
+    def load_all_shards(self):
+        for dir in os.listdir(self.SHARDS_DIR):
+            dir_path = os.path.join(self.SHARDS_DIR, dir)
+            self.ds = self.ds.concatenate(tf.data.Dataset.load(dir_path))
+
+    def get_image_label_to_remove(self, index):
+        batch = self.get_tfds_batch(index + 1)
+        image, label = batch.skip(index).take(1).as_numpy_iterator().next()
+        return image, label
+
+    def remove_example_at_index(self, index):
+        image_to_remove, label_to_remove = self.get_image_label_to_remove(index)
+        self.ds = self.ds.filter(lambda image, label: not np.array_equal(image, image_to_remove) and label != label_to_remove)
 
 
 if '__main__' == __name__:
-    dataset = TFDataset(dataset_id='cats_vs_dogs')
+    tfds_utility = TfdsUtility(dataset_id='cats_vs_dogs')
 
-    # dataset.create_example('NG_Cat.png', 1)
+    # image_id = 'NG_Cat.png'
+    # label = 0
+    # example = tfds_utility.create_example(image_id, label)
+    #
+    # tfds_utility.add_example_to_ds(example)
 
-    # dataset.create_tfrecord()
-    # batch = dataset.get_batch(16, 'train')
-    # dataset.view_batch(batch)
+    tfds_utility.remove_example_at_index(0)
+
+    tfds_utility.view_batch(tfds_utility.get_np_batch(1))
