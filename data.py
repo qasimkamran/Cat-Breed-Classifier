@@ -14,7 +14,7 @@ except ImportError:
     util.handle_tfds_protobuf_winerror(
         'D:\\Projects\\Cats-v-Dogs-Classifier\\venv\\lib\\site-packages\\tensorflow_datasets\\core\\shuffle.py')
     print("Import error handled")
-    print("Verify shuffle.py contents and re-run data.py")
+    print("Verify shuffle.py contents and re-run test_data.py")
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
@@ -78,6 +78,8 @@ class TFDSUtility:
 
     def __init__(self, custom_tfds):
         self.custom_tfds = custom_tfds
+        if not isinstance(self.custom_tfds, CustomTFDS):
+            raise Exception("CustomTFDS object is not instantiated")
 
     def get_np_batch(self, batch_size):
         batch = self.custom_tfds.ds.take(batch_size)
@@ -161,20 +163,3 @@ class TFDSUtility:
         self.custom_tfds.ds = self.custom_tfds.ds.filter(lambda image, label:
                                                          self.index_remove_filter(
                                                              image, label, image_to_remove, label_to_remove))
-
-
-if '__main__' == __name__:
-    custom_tfds = CustomTFDS(dataset_id='cats_vs_dogs')
-    tfds_utility = TFDSUtility(custom_tfds)
-
-    # TODO: add test file for different runs
-
-    # image_id = 'NG_Cat.png'
-    # label = 0
-    # example = tfds_utility.create_example(image_id, label)
-    #
-    # tfds_utility.add_example_to_ds(example)
-
-    tfds_utility.remove_example_at_index(1)
-
-    tfds_utility.view_batch(tfds_utility.get_np_batch(2))
