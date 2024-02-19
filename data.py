@@ -67,10 +67,22 @@ class CustomTFDS:
 
     def load_all_shards(self):
         util.print_and_log("Loading all shards...")
+        if not os.path.exists(self.SHARDS_DIR):
+            os.mkdir(self.SHARDS_DIR)
         for dir in os.listdir(self.SHARDS_DIR):
             dir_path = os.path.join(self.SHARDS_DIR, dir)
             self.ds = self.ds.concatenate(tf.data.Dataset.load(dir_path))
         util.print_and_log("All shards loaded")
+
+    def get_train_val_test_ds(self, val_split, test_split):
+        num_examples = self.ds.cardinality().numpy()
+        val_size = int(num_examples * val_split)
+        test_size = int(num_examples * test_split)
+        train_size = num_examples - val_size - test_size
+        train_ds = self.ds.take(train_size)
+        val_ds = self.ds.skip(train_size).take(val_size)
+        test_ds = self.ds.skip(train_size + val_size).take(test_size)
+        return train_ds, val_ds, test_ds
 
 
 class TFDSUtility:
